@@ -1,0 +1,11 @@
+.build/
+*.o
+*.d
+build/
+*.xcresult
+*.xcodeproj
+DerivedData/
+__pycache__/
+*.pyc
+.DS_Store
+Package.resolved
