@@ -59,27 +59,27 @@ python3 scripts/coverage_gap.py \
 
 ```
 CloudTestBase (XCTestCase)
-├── withRetry<T>()       — exponential backoff, retryable vs non-retryable errors
-├── assertCloudOperation()— budget assertion + status assertion in one call
-└── setUp/tearDown       — connect/disconnect + slow-test budget check
+├── withRetry<T>(): exponential backoff, retryable vs non-retryable errors
+├── assertCloudOperation(): budget assertion + status assertion in one call
+└── setUp/tearDown: connect/disconnect + slow-test budget check
 
 CloudAPIClient (actor)
-├── syncDocument()       — PUT with conflict detection
-├── fetchDocuments()     — paginated GET
-├── deleteDocument()     — DELETE with 404 handling
-└── mockMode             — in-process stubs, no network required for CI
+├── syncDocument(): PUT with conflict detection
+├── fetchDocuments(): paginated GET
+├── deleteDocument(): DELETE with 404 handling
+└── mockMode: in-process stubs, no network required for CI
 
 FailureAnalyzer (actor)
-├── categorize()         — infrastructure / product / environment / flaky
-├── record()             — concurrent-safe failure recording
-├── flakyOperations()    — ops that failed on attempt > 1
-└── summary()            — FailureSummary for CI reporting
+├── categorize(): infrastructure / product / environment / flaky
+├── record(): concurrent-safe failure recording
+├── flakyOperations(): ops that failed on attempt > 1
+└── summary(): FailureSummary for CI reporting
 
 scripts/triage.py
-├── parse_xcresult()     — xcresulttool JSON extraction
-├── parse_log_file()     — plain-text xcodebuild log parser
-├── TRIAGE_RULES[]       — 11 ordered regex rules (infrastructure → product → flaky)
-└── build_report()       — signal ratio, actionable vs noise separation
+├── parse_xcresult(): xcresulttool JSON extraction
+├── parse_log_file(): plain-text xcodebuild log parser
+├── TRIAGE_RULES[]: 11 ordered regex rules (infrastructure → product → flaky)
+└── build_report(): signal ratio, actionable vs noise separation
 ```
 
 ---
