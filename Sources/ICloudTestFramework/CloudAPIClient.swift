@@ -1,16 +1,23 @@
 import Foundation
 
-public enum CloudAPIError: Error, Sendable {
+public enum CloudAPIError: Error, Sendable, Equatable {
     case timeout(after: TimeInterval)
     case serverError(statusCode: Int, body: String)
     case unauthorized(reason: String)
     case notFound(resource: String)
     case conflict(resource: String, detail: String)
     case invalidData(field: String, detail: String)
+    // 429-style throttling. retryAfter mirrors the server's Retry-After
+    // hint (in seconds) so callers can back off deterministically instead
+    // of guessing.
+    case rateLimited(retryAfter: TimeInterval)
+    // Fault-injection offline mode — client is intentionally unreachable
+    // until CloudAPIClient.recover() is called.
+    case offline
 
     var isRetryable: Bool {
         switch self {
-        case .timeout, .serverError: return true
+        case .timeout, .serverError, .rateLimited: return true
         default: return false
         }
     }
@@ -51,8 +58,55 @@ public actor CloudAPIClient {
     // When true, responses come from in-memory stubs (no network required).
     public var mockMode: Bool = true
 
+    // Fault injection state — see CloudFaultInjection.swift. Empty scenario
+    // + SystemFaultClock is a no-op, so normal (non-test) use is unaffected.
+    private var faultScenario = CloudFaultScenario()
+    private var faultClock: any FaultInjectionClock = SystemFaultClock()
+
     public init(session: URLSession = .shared) {
         self.session = session
+    }
+
+    /// Installs a fault scenario, replacing whatever was previously queued.
+    public func install(_ scenario: CloudFaultScenario) {
+        faultScenario = scenario
+    }
+
+    /// Installs a clock for injected-latency delays. Tests should install
+    /// `ManualFaultClock`; production/staging use keeps the default
+    /// `SystemFaultClock`.
+    public func install(clock: any FaultInjectionClock) {
+        faultClock = clock
+    }
+
+    /// Puts the client into a persistent offline state — every call fails
+    /// with `.offline` until `recover()` is called. Does not touch any
+    /// already-queued fault steps.
+    public func goOffline() {
+        faultScenario = faultScenario.goOffline()
+    }
+
+    /// Ends fault-injected offline mode.
+    public func recover() {
+        faultScenario = faultScenario.recovered()
+    }
+
+    // Consumes one queued fault step (if any) before an operation runs.
+    // Offline takes priority and never consumes the queue.
+    private func applyFaultInjection() async throws {
+        if faultScenario.isOffline {
+            throw CloudAPIError.offline
+        }
+        guard let step = faultScenario.dequeueStep() else { return }
+        if step.latency > .zero {
+            try await faultClock.sleep(for: step.latency)
+        }
+        switch step.outcome {
+        case .succeed:
+            return
+        case .fail(let fault):
+            throw fault.makeError(afterLatency: step.latency)
+        }
     }
 
     public func connect() async throws {
@@ -71,6 +125,7 @@ public actor CloudAPIClient {
     public func syncDocument(id: String, payload: [String: Any]) async throws -> CloudOperationResult {
         let start = Date()
         try requireConnected()
+        try await applyFaultInjection()
 
         if mockMode {
             try await simulatedDelay()
@@ -103,6 +158,7 @@ public actor CloudAPIClient {
     // Fetch documents with optional cursor for pagination.
     public func fetchDocuments(cursor: String? = nil, limit: Int = 50) async throws -> ([String: Any], String?) {
         try requireConnected()
+        try await applyFaultInjection()
         if mockMode {
             try await simulatedDelay()
             let docs: [String: Any] = [
@@ -126,6 +182,7 @@ public actor CloudAPIClient {
 
     public func deleteDocument(id: String) async throws -> CloudOperationResult {
         try requireConnected()
+        try await applyFaultInjection()
         if mockMode {
             try await simulatedDelay()
             if id == "not-found-id" {
@@ -139,6 +196,26 @@ public actor CloudAPIClient {
         req.setValue("Bearer \(authToken)", forHTTPHeaderField: "Authorization")
         let (data, response) = try await session.data(for: req)
         return try parseResponse(data: data, response: response, durationMs: 0)
+    }
+
+    // Sync a batch of documents, reporting a per-item outcome. Lets tests
+    // exercise partial-batch-failure fault injection (some ids fail, the
+    // rest succeed) via CloudFaultScenario.failingBatchItems(_:with:).
+    public func syncBatch(_ documents: [CloudBatchDocument]) async throws -> CloudBatchResult {
+        try requireConnected()
+        if faultScenario.isOffline {
+            throw CloudAPIError.offline
+        }
+        var items: [CloudBatchItemResult] = []
+        items.reserveCapacity(documents.count)
+        for doc in documents {
+            if let fault = faultScenario.batchFault(for: doc.id) {
+                items.append(CloudBatchItemResult(id: doc.id, outcome: .failed(fault.makeError(afterLatency: .zero))))
+            } else {
+                items.append(CloudBatchItemResult(id: doc.id, outcome: .success))
+            }
+        }
+        return CloudBatchResult(items: items)
     }
 
     private func requireConnected() throws {

@@ -37,6 +37,8 @@ public actor FailureAnalyzer {
             switch apiError {
             case .timeout:       return .infrastructure
             case .serverError:   return .infrastructure
+            case .rateLimited:   return .infrastructure
+            case .offline:       return .infrastructure
             case .unauthorized:  return .environment
             case .notFound:      return .product
             case .conflict:      return .product
