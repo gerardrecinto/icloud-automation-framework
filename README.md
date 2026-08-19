@@ -22,8 +22,11 @@ analysis tool using actor isolation + `xcresulttool`), [ci-triage](https://githu
 | `Sources/ICloudTestFramework/FailureAnalyzer.swift` | Swift actor for concurrent failure categorization | Async-safe triage |
 | `Sources/ICloudTestFramework/CloudAPIClient.swift` | Mock cloud API client: sync, fetch, delete, batch | Integration-test harness |
 | `Sources/ICloudTestFramework/CloudFaultInjection.swift` | Deterministic fault scenarios: latency, 5xx/429, offline, partial batch failure | Chaos/failure-mode test coverage |
+| `Sources/ICloudTestFramework/ConflictScenario.swift` | Multi-device conflict-resolution DSL + deterministic runner | Distributed-state test coverage |
+| `Sources/ICloudTestFramework/ConflictAssertions.swift` | `XCTAssertConflictResolved` / `XCTAssertNoConflicts` / `XCTAssertConflictCount` | Readable conflict-test failures |
 | `Tests/ICloudTests/CloudSyncTests.swift` | XCTest suite across sync lifecycle | Regression coverage |
 | `Tests/ICloudTests/CloudFaultInjectionTests.swift` | XCTest suite for fault scenarios (retry, offline, 429, partial batch) | Failure-mode regression coverage |
+| `Tests/ICloudTests/ConflictScenarioTests.swift` | XCTest suite for multi-device conflict resolution | Distributed-state regression coverage |
 | `Tests/ICloudTests/FailureAnalyzerTests.swift` | Unit tests for triage categorization | Maintained signal quality |
 | `scripts/triage.py` | Python parser for `.xcresult` bundles and xcodebuild logs | CI failure reporting |
 | `scripts/coverage_gap.py` | Python scanner for untested public symbols | Coverage gap detection |
@@ -77,6 +80,11 @@ FailureAnalyzer (actor)
 ├── flakyOperations(): ops that failed on attempt > 1
 └── summary(): FailureSummary for CI reporting
 
+ConflictScenarioRunner (actor)
+├── ConflictScenario: result-builder DSL — device(_:).edit(_:value:), sync(_:)
+├── run(): replays steps in scenario order, no wall-clock timing
+└── ConflictScenarioResult: final state + per-document conflict log
+
 scripts/triage.py
 ├── parse_xcresult(): xcresulttool JSON extraction
 ├── parse_log_file(): plain-text xcodebuild log parser
@@ -128,6 +136,28 @@ wall-clock time), and partial-batch failures via `syncBatch(_:)` +
 `.failingBatchItems(_:with:)`. Every injected failure is still a plain
 `CloudAPIError`, so `FailureAnalyzer` categorizes and reports on it the
 same as a real failure — no separate diagnostic path.
+
+---
+
+## Conflict Resolution
+
+`ConflictScenario` reproduces the thing that actually makes iCloud-style sync hard: two devices editing the same document independently, then both syncing. It's a small DSL, resolved deterministically (scenario order, not wall-clock) by `ConflictScenarioRunner`:
+
+```swift
+let scenario = ConflictScenario {
+    device("iphone").edit("note", value: "A")
+    device("mac").edit("note", value: "B")
+    sync("iphone")
+    sync("mac")
+}
+
+let result = await ConflictScenarioRunner().run(scenario)
+
+XCTAssertConflictResolved(result, document: "note", resolvesTo: "B")   // mac synced last
+XCTAssertConflictCount(result, document: "note", expected: 1)
+```
+
+A conflict is only recorded when a device's sync would overwrite another device's write it never saw — a device syncing its own earlier edit again, or editing a document nobody else touched, produces no conflict. `.lastWriterWins` is the only strategy implemented today; `ConflictResolutionStrategy` exists as the seam for adding more (first-writer-wins, field-level merge) without changing the DSL or the assertions. `XCTAssertNoConflicts` and `XCTAssertConflictCount` round out the assertion set for scenarios that shouldn't produce a conflict at all.
 
 ---
 
