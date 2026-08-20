@@ -126,8 +126,13 @@ def parse_log_file(log_path: str) -> list[TestFailure]:
     current_test: Optional[str] = None
     current_lines: list[str] = []
 
-    test_start = re.compile(r"Test Case '-\[(\S+)\]' started")
-    test_fail = re.compile(r"Test Case '-\[(\S+)\]' failed \((\d+\.\d+) seconds\)")
+    # Real xcodebuild/XCTest output has a space between the class and
+    # method inside the brackets, e.g.
+    # "Test Case '-[ICloudTests.CloudSyncTests testSyncNewDocument]' started."
+    # \S+ never matches that (it stops at the space), so every log this
+    # was pointed at silently produced zero parsed failures.
+    test_start = re.compile(r"Test Case '-\[([^\]]+)\]' started")
+    test_fail = re.compile(r"Test Case '-\[([^\]]+)\]' failed \((\d+\.\d+) seconds\)")
     assertion = re.compile(r"(.+):(\d+): error: (.+)")
 
     with open(log_path) as f:
