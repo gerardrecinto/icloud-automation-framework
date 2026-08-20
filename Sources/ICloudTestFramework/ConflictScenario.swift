@@ -62,6 +62,11 @@ public enum ConflictResolutionStrategy: String, Sendable {
     // "Later" is scenario order, not wall-clock time — the whole point of
     // this DSL is a result that doesn't depend on real timing.
     case lastWriterWins
+    // The device that synced the document first keeps the server value.
+    // A later sync() of the same document by a different device is still
+    // recorded as a conflict (someone's edit got dropped), but that
+    // device's value never reaches finalState.
+    case firstWriterWins
 }
 
 public struct DocumentConflict: Sendable, Equatable {
@@ -132,9 +137,20 @@ public actor ConflictScenarioRunner {
                                 winningDevice: step.device,
                                 resolvedValue: value
                             ))
+                            serverState[document] = (value, step.device)
+                        case .firstWriterWins:
+                            conflicts.append(DocumentConflict(
+                                document: document,
+                                contenders: [existing.writer: existing.value, step.device: value],
+                                winningDevice: existing.writer,
+                                resolvedValue: existing.value
+                            ))
+                            // existing writer's value stands — this sync's
+                            // edit is dropped, not written to serverState.
                         }
+                    } else {
+                        serverState[document] = (value, step.device)
                     }
-                    serverState[document] = (value, step.device)
                 }
                 pendingEdits[step.device] = [:]
             }

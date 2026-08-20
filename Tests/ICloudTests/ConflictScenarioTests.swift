@@ -145,4 +145,53 @@ final class ConflictScenarioTests: XCTestCase {
         XCTAssertNil(result.resolvedValue(for: "note"))
         XCTAssertNoConflicts(result)
     }
+
+    func testFirstWriterWinsKeepsTheEarlierSyncersValue() async {
+        let scenario = ConflictScenario {
+            device("iphone").edit("note", value: "A")
+            device("mac").edit("note", value: "B")
+            sync("iphone")
+            sync("mac")
+        }
+
+        let result = await ConflictScenarioRunner(strategy: .firstWriterWins).run(scenario)
+
+        // iphone synced first, so its value stands even though mac
+        // synced later — the opposite of lastWriterWins on the same
+        // scenario.
+        XCTAssertConflictResolved(result, document: "note", resolvesTo: "A", strategy: .firstWriterWins)
+        XCTAssertConflictCount(result, document: "note", expected: 1)
+    }
+
+    func testFirstWriterWinsStillRecordsTheDroppedEditAsAConflict() async {
+        let scenario = ConflictScenario {
+            device("iphone").edit("note", value: "A")
+            device("mac").edit("note", value: "B")
+            sync("iphone")
+            sync("mac")
+        }
+
+        let result = await ConflictScenarioRunner(strategy: .firstWriterWins).run(scenario)
+        let conflict = result.conflicts(for: "note").first
+
+        XCTAssertEqual(conflict?.contenders["iphone"], "A")
+        XCTAssertEqual(conflict?.contenders["mac"], "B")
+        XCTAssertEqual(conflict?.winningDevice, "iphone")
+    }
+
+    func testFirstWriterWinsThreeWayConflictKeepsTheFirstSyncersValue() async {
+        let scenario = ConflictScenario {
+            device("iphone").edit("note", value: "A")
+            device("mac").edit("note", value: "B")
+            device("ipad").edit("note", value: "C")
+            sync("iphone")
+            sync("mac")
+            sync("ipad")
+        }
+
+        let result = await ConflictScenarioRunner(strategy: .firstWriterWins).run(scenario)
+
+        XCTAssertConflictResolved(result, document: "note", resolvesTo: "A", strategy: .firstWriterWins)
+        XCTAssertConflictCount(result, document: "note", expected: 2)
+    }
 }

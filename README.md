@@ -30,6 +30,7 @@ analysis tool using actor isolation + `xcresulttool`), [ci-triage](https://githu
 | `Tests/ICloudTests/FailureAnalyzerTests.swift` | Unit tests for triage categorization | Maintained signal quality |
 | `scripts/triage.py` | Python parser for `.xcresult` bundles and xcodebuild logs | CI failure reporting |
 | `scripts/coverage_gap.py` | Python scanner for untested public symbols | Coverage gap detection |
+| `scripts/tests/` | pytest suite for `triage.py` and `coverage_gap.py` | Python tooling regression coverage |
 | `Jenkinsfile` | Build, test, triage, and publish flow | CI/CD automation |
 
 ---
@@ -49,6 +50,10 @@ python3 scripts/triage.py log build/xcodebuild.log
 
 # Categorize a single failure message
 python3 scripts/triage.py categorize "XCTAssertEqual failed: expected 200 got 404"
+
+# Run the Python tooling's own test suite
+pip install pytest
+python3 -m pytest scripts/tests/ -v
 
 # Check test coverage gaps
 python3 scripts/coverage_gap.py \
@@ -157,7 +162,7 @@ XCTAssertConflictResolved(result, document: "note", resolvesTo: "B")   // mac sy
 XCTAssertConflictCount(result, document: "note", expected: 1)
 ```
 
-A conflict is only recorded when a device's sync would overwrite another device's write it never saw — a device syncing its own earlier edit again, or editing a document nobody else touched, produces no conflict. `.lastWriterWins` is the only strategy implemented today; `ConflictResolutionStrategy` exists as the seam for adding more (first-writer-wins, field-level merge) without changing the DSL or the assertions. `XCTAssertNoConflicts` and `XCTAssertConflictCount` round out the assertion set for scenarios that shouldn't produce a conflict at all.
+A conflict is only recorded when a device's sync would overwrite another device's write it never saw — a device syncing its own earlier edit again, or editing a document nobody else touched, produces no conflict. Two strategies are implemented: `.lastWriterWins` (default — the device that syncs last keeps the server value) and `.firstWriterWins` (the device that syncs first keeps it; a later sync of the same document is still recorded as a conflict, but its value never reaches `finalState`). Pass either to `ConflictScenarioRunner(strategy:)`. `ConflictResolutionStrategy` remains the seam for adding more (field-level merge, for example) without changing the DSL or the assertions. `XCTAssertNoConflicts` and `XCTAssertConflictCount` round out the assertion set for scenarios that shouldn't produce a conflict at all.
 
 ---
 
