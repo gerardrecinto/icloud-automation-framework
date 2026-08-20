@@ -16,3 +16,21 @@ jobs:
 
       - name: Test
         run: swift test -v
+
+  scripts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install pytest
+        run: pip install pytest
+
+      - name: Test triage.py + coverage_gap.py
+        run: python3 -m pytest scripts/tests/ -v
+
+      - name: Coverage gap check (smoke test against this repo's own Sources/Tests)
+        run: python3 scripts/coverage_gap.py --source Sources/ --tests Tests/ --min-coverage 80
