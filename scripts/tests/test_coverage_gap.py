@@ -95,7 +95,7 @@ def test_find_gaps_excludes_symbols_referenced_in_tests(tmp_path):
     _write(test_dir, "ClientTests.swift", TEST_FILE)
 
     symbols = coverage_gap.extract_symbols(str(src_dir))
-    tested = coverage_gap.extract_tested_names(str(test_dir))
+    tested, _ = coverage_gap.extract_tested_names(str(test_dir))
     gaps = coverage_gap.find_gaps(symbols, tested)
 
     gap_names = {g.name for g in gaps}
@@ -109,6 +109,57 @@ def test_find_gaps_excludes_symbols_referenced_in_tests(tmp_path):
     assert "helperOnly" not in gap_names
 
 
+ENUM_SOURCE_FILE = """\
+public enum SyncStrategy: String, Sendable {
+    case lastWriterWins
+    case firstWriterWins
+}
+"""
+
+ENUM_TEST_FILE = """\
+import XCTest
+
+final class SyncStrategyTests: XCTestCase {
+    func testFirstWriterWins() {
+        let strategy: SyncStrategy = .firstWriterWins
+        _ = strategy
+    }
+}
+"""
+
+
+def test_extract_enum_cases_maps_case_names_to_their_enum(tmp_path):
+    src_dir = tmp_path / "Sources"
+    src_dir.mkdir()
+    _write(src_dir, "Strategy.swift", ENUM_SOURCE_FILE)
+
+    cases = coverage_gap.extract_enum_cases(str(src_dir))
+
+    assert cases["SyncStrategy"] == ["lastWriterWins", "firstWriterWins"]
+
+
+def test_find_gaps_credits_enum_tested_only_through_implicit_member_syntax(tmp_path):
+    # A test can exercise an enum purely through Swift's implicit member
+    # syntax (`.firstWriterWins`) without the enum's own type name ever
+    # appearing as a token in the test file, which used to make find_gaps
+    # report the enum as untested even though a real test covers it.
+    src_dir = tmp_path / "Sources"
+    src_dir.mkdir()
+    _write(src_dir, "Strategy.swift", ENUM_SOURCE_FILE)
+    test_dir = tmp_path / "Tests"
+    test_dir.mkdir()
+    _write(test_dir, "StrategyTests.swift", ENUM_TEST_FILE)
+
+    symbols = coverage_gap.extract_symbols(str(src_dir))
+    tested, tested_members = coverage_gap.extract_tested_names(str(test_dir))
+    for enum_name, case_names in coverage_gap.extract_enum_cases(str(src_dir)).items():
+        if any(case in tested_members for case in case_names):
+            tested.add(enum_name)
+    gaps = coverage_gap.find_gaps(symbols, tested)
+
+    assert "SyncStrategy" not in {g.name for g in gaps}
+
+
 def test_compute_coverage_percentage(tmp_path):
     src_dir = tmp_path / "Sources"
     src_dir.mkdir()
@@ -118,7 +169,7 @@ def test_compute_coverage_percentage(tmp_path):
     _write(test_dir, "ClientTests.swift", TEST_FILE)
 
     symbols = coverage_gap.extract_symbols(str(src_dir))
-    tested = coverage_gap.extract_tested_names(str(test_dir))
+    tested, _ = coverage_gap.extract_tested_names(str(test_dir))
     coverage = coverage_gap.compute_coverage(symbols, tested)
 
     public_syms = [s for s in symbols if s.is_public]

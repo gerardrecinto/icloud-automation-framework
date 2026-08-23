@@ -55,10 +55,12 @@ def extract_symbols(source_dir: str) -> list[Symbol]:
     return symbols
 
 
-def extract_tested_names(test_dir: str) -> set[str]:
+def extract_tested_names(test_dir: str) -> tuple[set[str], set[str]]:
     tested: set[str] = set()
+    tested_members: set[str] = set()
     call_pattern = re.compile(r"\b(\w+)\s*\(")
     type_ref = re.compile(r"\b([A-Z]\w+)\b")
+    member_pattern = re.compile(r"\.([a-zA-Z_]\w*)")
 
     for path in Path(test_dir).rglob("*.swift"):
         content = path.read_text(encoding="utf-8")
@@ -66,7 +68,27 @@ def extract_tested_names(test_dir: str) -> set[str]:
             tested.add(m.group(1))
         for m in type_ref.finditer(content):
             tested.add(m.group(1))
-    return tested
+        for m in member_pattern.finditer(content):
+            tested_members.add(m.group(1))
+    return tested, tested_members
+
+
+def extract_enum_cases(source_dir: str) -> dict[str, list[str]]:
+    cases_by_enum: dict[str, list[str]] = {}
+    enum_start = re.compile(r"^\s*(?:public|open|internal)?\s*enum\s+(\w+)", re.MULTILINE)
+    case_line = re.compile(r"^\s*case\s+(\w+)", re.MULTILINE)
+
+    for path in sorted(Path(source_dir).rglob("*.swift")):
+        content = path.read_text(encoding="utf-8")
+        starts = list(enum_start.finditer(content))
+        for i, m in enumerate(starts):
+            body_start = content.find("{", m.end())
+            if body_start == -1:
+                continue
+            body_end = starts[i + 1].start() if i + 1 < len(starts) else len(content)
+            case_names = case_line.findall(content[body_start:body_end])
+            cases_by_enum.setdefault(m.group(1), []).extend(case_names)
+    return cases_by_enum
 
 
 def find_gaps(symbols: list[Symbol], tested: set[str]) -> list[Symbol]:
@@ -93,7 +115,16 @@ def main() -> None:
     args = parser.parse_args()
 
     symbols = extract_symbols(args.source)
-    tested = extract_tested_names(args.tests)
+    tested, tested_members = extract_tested_names(args.tests)
+
+    # Swift's implicit member syntax (.firstWriterWins) never spells out the
+    # enum type name, so a case referenced that way made the whole enum look
+    # untested even when it clearly was. Case names can collide across
+    # unrelated enums, so this is still a heuristic, not exact attribution.
+    for enum_name, case_names in extract_enum_cases(args.source).items():
+        if any(case in tested_members for case in case_names):
+            tested.add(enum_name)
+
     coverage = compute_coverage(symbols, tested)
     gaps = find_gaps(symbols, tested)
 
